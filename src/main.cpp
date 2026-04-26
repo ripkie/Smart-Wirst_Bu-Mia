@@ -15,19 +15,32 @@ const char *FIREBASE_URL = "https://smart-wirst-default-rtdb.asia-southeast1.fir
 const char *PATIENT_ID = "pasien_001";
 
 const char *NTP_SERVER = "pool.ntp.org";
-const long GMT_OFFSET_SEC = 7 * 3600; // WIB
+const long GMT_OFFSET_SEC = 7 * 3600;
 const int DAYLIGHT_OFFSET_SEC = 0;
 
 char line[160];
 int idx = 0;
 
-unsigned long lastSendMs = 0;
-int lastSbp = -1;
-int lastDbp = -1;
-int lastBpm = -1;
-
 bool wifiConnected = false;
 bool timeReady = false;
+bool expectResult = false;
+
+unsigned long lastSendMs = 0;
+int lastSbp = -1, lastDbp = -1, lastBpm = -1;
+
+// ROT mode
+bool rotMode = false;
+int rotStep = 0;
+
+int rotSbpMiring = 0, rotDbpMiring = 0, rotBpmMiring = 0;
+int rotSbpTerlentang = 0, rotDbpTerlentang = 0, rotBpmTerlentang = 0;
+
+int lastRotSbp = -1;
+int lastRotDbp = -1;
+int lastRotBpm = -1;
+
+unsigned long lastRotTime = 0;
+const unsigned long ROT_DELAY = 8000;
 
 void connectWiFiIfNeeded()
 {
@@ -50,15 +63,15 @@ void connectWiFiIfNeeded()
   }
   Serial.println();
 
-  if (WiFi.status() == WL_CONNECTED)
+  wifiConnected = WiFi.status() == WL_CONNECTED;
+
+  if (wifiConnected)
   {
-    wifiConnected = true;
     Serial.print("WiFi connected. IP: ");
     Serial.println(WiFi.localIP());
   }
   else
   {
-    wifiConnected = false;
     Serial.println("WiFi gagal connect");
   }
 }
@@ -157,53 +170,73 @@ float hitungMAP(int sbp, int dbp)
   return dbp + ((sbp - dbp) / 3.0f);
 }
 
-void tampilkanHasil(int sbp, int dbp, int bpm, float mapValue, const char *datetimeStr, const char *patientId)
+bool kirimPayloadFirebase(String path, String payload, bool postMode)
 {
-  Serial.println();
-  Serial.println("================================");
-  Serial.println("HASIL PENGUKURAN");
-  Serial.println("================================");
-  Serial.print("ID Pasien : ");
-  Serial.println(patientId);
+  WiFiClientSecure client;
+  client.setInsecure();
 
-  Serial.print("Waktu     : ");
-  Serial.println(datetimeStr);
+  HTTPClient https;
+  bool ok = false;
 
-  Serial.print("1) Tekanan Darah / Blood Pressure : ");
-  Serial.print(sbp);
-  Serial.print("/");
-  Serial.println(dbp);
+  if (https.begin(client, path))
+  {
+    https.addHeader("Content-Type", "application/json");
 
-  Serial.print("2) Heart Rate : ");
-  Serial.print(bpm);
-  Serial.println(" bpm");
+    int httpCode = postMode ? https.POST(payload) : https.PUT(payload);
 
-  Serial.print("3) MAP : ");
-  Serial.println(mapValue, 1);
-  Serial.println("================================");
-  Serial.println();
+    Serial.print(postMode ? "[FIREBASE] POST => HTTP " : "[FIREBASE] PUT => HTTP ");
+    Serial.println(httpCode);
+
+    if (httpCode > 0)
+    {
+      Serial.println(https.getString());
+      ok = (httpCode >= 200 && httpCode < 300);
+    }
+
+    https.end();
+  }
+
+  return ok;
 }
 
-bool kirimKeFirebase(int sbp, int dbp, int bpm, float mapValue, const char *datetimeStr, unsigned long epochMs, const char *patientId)
+bool kirimPengukuranKeFirebase(int sbp, int dbp, int bpm)
 {
   connectWiFiIfNeeded();
   if (!wifiConnected)
     return false;
 
-  if (!timeReady)
-  {
-    setupTimeIfNeeded();
-  }
+  setupTimeIfNeeded();
 
-  WiFiClientSecure client;
-  client.setInsecure();
+  char datetimeStr[32];
+  unsigned long epochMs = 0;
+  getDateTimeString(datetimeStr, sizeof(datetimeStr), epochMs);
 
-  HTTPClient https;
+  float mapValue = hitungMAP(sbp, dbp);
 
-  String basePath = String(FIREBASE_URL) + "/patients/" + String(patientId);
+  Serial.println();
+  Serial.println("================================");
+  Serial.println("HASIL PENGUKURAN");
+  Serial.println("================================");
+  Serial.print("ID Pasien : ");
+  Serial.println(PATIENT_ID);
+  Serial.print("Waktu     : ");
+  Serial.println(datetimeStr);
+  Serial.print("Tekanan Darah : ");
+  Serial.print(sbp);
+  Serial.print("/");
+  Serial.println(dbp);
+  Serial.print("Heart Rate    : ");
+  Serial.print(bpm);
+  Serial.println(" bpm");
+  Serial.print("MAP           : ");
+  Serial.println(mapValue, 1);
+  Serial.println("================================");
+
+  String basePath = String(FIREBASE_URL) + "/patients/" + String(PATIENT_ID);
 
   String payload = "{";
-  payload += "\"patient_id\":\"" + String(patientId) + "\",";
+  payload += "\"patient_id\":\"" + String(PATIENT_ID) + "\",";
+  payload += "\"mode\":\"single\",";
   payload += "\"sbp\":" + String(sbp) + ",";
   payload += "\"dbp\":" + String(dbp) + ",";
   payload += "\"bpm\":" + String(bpm) + ",";
@@ -212,39 +245,179 @@ bool kirimKeFirebase(int sbp, int dbp, int bpm, float mapValue, const char *date
   payload += "\"datetime\":\"" + String(datetimeStr) + "\"";
   payload += "}";
 
-  bool ok1 = false;
-  String urlLatest = basePath + "/latest.json";
-
-  if (https.begin(client, urlLatest))
-  {
-    https.addHeader("Content-Type", "application/json");
-    int httpCode = https.PUT(payload);
-    Serial.print("[FIREBASE] PUT latest => HTTP ");
-    Serial.println(httpCode);
-    ok1 = (httpCode >= 200 && httpCode < 300);
-    https.end();
-  }
-
-  bool ok2 = false;
-  String urlLogs = basePath + "/logs.json";
-
-  if (https.begin(client, urlLogs))
-  {
-    https.addHeader("Content-Type", "application/json");
-    int httpCode = https.POST(payload);
-    Serial.print("[FIREBASE] POST logs => HTTP ");
-    Serial.println(httpCode);
-    ok2 = (httpCode >= 200 && httpCode < 300);
-    https.end();
-  }
+  bool ok1 = kirimPayloadFirebase(basePath + "/latest.json", payload, false);
+  bool ok2 = kirimPayloadFirebase(basePath + "/logs.json", payload, true);
 
   disconnectWiFi();
   return ok1 && ok2;
 }
 
+bool kirimROTKeFirebase(int rot)
+{
+  connectWiFiIfNeeded();
+  if (!wifiConnected)
+    return false;
+
+  setupTimeIfNeeded();
+
+  char datetimeStr[32];
+  unsigned long epochMs = 0;
+  getDateTimeString(datetimeStr, sizeof(datetimeStr), epochMs);
+
+  String basePath = String(FIREBASE_URL) + "/patients/" + String(PATIENT_ID);
+
+  String payload = "{";
+  payload += "\"patient_id\":\"" + String(PATIENT_ID) + "\",";
+  payload += "\"mode\":\"rot\",";
+  payload += "\"rot\":" + String(rot) + ",";
+  payload += "\"miring_kiri\":{";
+  payload += "\"sbp\":" + String(rotSbpMiring) + ",";
+  payload += "\"dbp\":" + String(rotDbpMiring) + ",";
+  payload += "\"bpm\":" + String(rotBpmMiring);
+  payload += "},";
+  payload += "\"terlentang\":{";
+  payload += "\"sbp\":" + String(rotSbpTerlentang) + ",";
+  payload += "\"dbp\":" + String(rotDbpTerlentang) + ",";
+  payload += "\"bpm\":" + String(rotBpmTerlentang);
+  payload += "},";
+  payload += "\"timestamp_ms\":" + String(epochMs) + ",";
+  payload += "\"datetime\":\"" + String(datetimeStr) + "\"";
+  payload += "}";
+
+  bool ok1 = kirimPayloadFirebase(basePath + "/rot/latest.json", payload, false);
+  bool ok2 = kirimPayloadFirebase(basePath + "/rot/logs.json", payload, true);
+
+  disconnectWiFi();
+  return ok1 && ok2;
+}
+
+void prosesROT(int sbp, int dbp, int bpm)
+{
+  if (sbp == lastRotSbp && dbp == lastRotDbp && bpm == lastRotBpm)
+  {
+    Serial.println("[ROT] Data duplikat diabaikan");
+    return;
+  }
+
+  if (rotStep > 0 && millis() - lastRotTime < ROT_DELAY)
+  {
+    Serial.println("[ROT] Tunggu pengukuran berikutnya...");
+    return;
+  }
+
+  lastRotSbp = sbp;
+  lastRotDbp = dbp;
+  lastRotBpm = bpm;
+  lastRotTime = millis();
+
+  if (rotStep == 0)
+  {
+    rotSbpMiring = sbp;
+    rotDbpMiring = dbp;
+    rotBpmMiring = bpm;
+
+    Serial.println();
+    Serial.println("================================");
+    Serial.println("[ROT] Sampel 1/2 diambil");
+    Serial.println("Posisi: MIRING KIRI");
+    Serial.print("Tekanan Darah : ");
+    Serial.print(sbp);
+    Serial.print("/");
+    Serial.println(dbp);
+    Serial.print("Heart Rate    : ");
+    Serial.print(bpm);
+    Serial.println(" bpm");
+    Serial.println("Lanjutkan pengukuran posisi TERLENTANG");
+    Serial.println("================================");
+
+    rotStep = 1;
+    return;
+  }
+
+  if (rotStep == 1)
+  {
+    rotSbpTerlentang = sbp;
+    rotDbpTerlentang = dbp;
+    rotBpmTerlentang = bpm;
+
+    int rot = rotDbpTerlentang - rotDbpMiring;
+
+    Serial.println();
+    Serial.println("================================");
+    Serial.println("[ROT] Sampel 2/2 diambil");
+    Serial.println("HASIL MODE ROT");
+    Serial.println("================================");
+
+    Serial.print("Miring kiri : ");
+    Serial.print(rotSbpMiring);
+    Serial.print("/");
+    Serial.print(rotDbpMiring);
+    Serial.print(" | BPM ");
+    Serial.println(rotBpmMiring);
+
+    Serial.print("Terlentang  : ");
+    Serial.print(rotSbpTerlentang);
+    Serial.print("/");
+    Serial.print(rotDbpTerlentang);
+    Serial.print(" | BPM ");
+    Serial.println(rotBpmTerlentang);
+
+    Serial.print("ROT         : ");
+    Serial.print(rotDbpTerlentang);
+    Serial.print(" - ");
+    Serial.print(rotDbpMiring);
+    Serial.print(" = ");
+    Serial.println(rot);
+    Serial.println("================================");
+
+    bool success = kirimROTKeFirebase(rot);
+    Serial.println(success ? "[FIREBASE] ROT berhasil dikirim" : "[FIREBASE] ROT gagal dikirim");
+
+    rotMode = false;
+    rotStep = 0;
+  }
+}
+
+void cekCommandSerial()
+{
+  while (Serial.available())
+  {
+    char cmd = Serial.read();
+
+    if (cmd == '4')
+    {
+      rotMode = true;
+      rotStep = 0;
+
+      lastRotSbp = -1;
+      lastRotDbp = -1;
+      lastRotBpm = -1;
+      lastRotTime = 0;
+
+      Serial.println();
+      Serial.println("================================");
+      Serial.println("MODE ROT AKTIF");
+      Serial.println("Sampel 1/2: MIRING KIRI");
+      Serial.println("Sampel 2/2: TERLENTANG");
+      Serial.println("ROT = DBP terlentang - DBP miring kiri");
+      Serial.println("================================");
+    }
+  }
+}
+
 void prosesLine(char *s)
 {
   if (strlen(s) == 0)
+    return;
+
+  if (strstr(s, "test return:0save record") != NULL)
+  {
+    expectResult = true;
+    Serial.println("[INFO] Hasil final siap, menunggu record...");
+    return;
+  }
+
+  if (!expectResult)
     return;
 
   uint8_t data[32];
@@ -260,42 +433,23 @@ void prosesLine(char *s)
         dbp >= 40 && dbp <= 180 &&
         bpm >= 30 && bpm <= 220)
     {
+      expectResult = false;
 
-      if (sbp == lastSbp && dbp == lastDbp && bpm == lastBpm &&
-          millis() - lastSendMs < 5000)
+      if (rotMode)
       {
+        prosesROT(sbp, dbp, bpm);
         return;
       }
 
-      float mapValue = hitungMAP(sbp, dbp);
-
-      char datetimeStr[32] = "belum sync";
-      unsigned long epochMs = 0;
-
-      // tampilkan hasil dulu, lalu kirim
-      tampilkanHasil(sbp, dbp, bpm, mapValue, datetimeStr, PATIENT_ID);
-
-      bool success = kirimKeFirebase(sbp, dbp, bpm, mapValue, datetimeStr, epochMs, PATIENT_ID);
-
-      // ambil waktu asli setelah wifi+ntp aktif
-      if (wifiConnected == false)
+      if (sbp == lastSbp && dbp == lastDbp && bpm == lastBpm &&
+          millis() - lastSendMs < 10000)
       {
-        // sengaja kosong
+        Serial.println("[INFO] Data duplikat diabaikan");
+        return;
       }
 
-      // connect lagi khusus ambil waktu lalu update payload kedua kali kalau mau,
-      // tapi untuk sederhana kita cukup kirim sekali setelah connect.
-      // alternatif lebih rapi: ambil waktu sebelum payload dibuat di kirimKeFirebase().
-      // untuk sekarang, data utama tetap tersimpan.
-
-      if (success)
-      {
-        Serial.println("[FIREBASE] Data berhasil dikirim");
-      }
-      else
-      {
-        Serial.println("[FIREBASE] Data gagal dikirim");
-      }
+      bool success = kirimPengukuranKeFirebase(sbp, dbp, bpm);
+      Serial.println(success ? "[FIREBASE] Data berhasil dikirim" : "[FIREBASE] Data gagal dikirim");
 
       lastSbp = sbp;
       lastDbp = dbp;
@@ -315,10 +469,13 @@ void setup()
 
   Serial.println("=== BP Reader Mode ===");
   Serial.println("WiFi standby. Menunggu hasil pengukuran...");
+  Serial.println("Ketik 4 lalu Enter untuk MODE ROT");
 }
 
 void loop()
 {
+  cekCommandSerial();
+
   while (Serial2.available())
   {
     char c = Serial2.read();
