@@ -32,13 +32,13 @@ int lastBpm = -1;
 String activePatientId = "";
 String activePatientName = "";
 String activeNurseName = "";
-String activeMode = "single";
 
-// ROT state
 int rotStep = 0;
+
 int miringSbp = 0;
 int miringDbp = 0;
 int miringBpm = 0;
+
 int terlentangSbp = 0;
 int terlentangDbp = 0;
 int terlentangBpm = 0;
@@ -48,15 +48,6 @@ String firestoreBaseUrl()
   return String("https://firestore.googleapis.com/v1/projects/") +
          FIRESTORE_PROJECT_ID +
          "/databases/(default)/documents";
-}
-
-void printWiFiStatus()
-{
-  Serial.print("[WIFI] Status: ");
-  Serial.println(WiFi.status());
-
-  Serial.print("[WIFI] RSSI: ");
-  Serial.println(WiFi.RSSI());
 }
 
 void connectWiFiIfNeeded()
@@ -72,7 +63,6 @@ void connectWiFiIfNeeded()
   while (WiFi.status() != WL_CONNECTED)
   {
     Serial.println("[WIFI] Menghubungkan WiFi...");
-
     WiFi.disconnect(true);
     delay(500);
 
@@ -90,7 +80,7 @@ void connectWiFiIfNeeded()
 
     if (WiFi.status() != WL_CONNECTED)
     {
-      Serial.println("[WIFI] Belum konek, coba ulang 2 detik lagi...");
+      Serial.println("[WIFI] Belum konek, coba ulang...");
       delay(2000);
     }
   }
@@ -99,9 +89,8 @@ void connectWiFiIfNeeded()
 
   Serial.print("[WIFI] Connected. IP: ");
   Serial.println(WiFi.localIP());
-  printWiFiStatus();
 
-  delay(1500); // tunggu koneksi stabil sebelum HTTPS
+  delay(1000);
 }
 
 void disconnectWiFi()
@@ -111,6 +100,7 @@ void disconnectWiFi()
   wifiConnected = false;
   timeReady = false;
   Serial.println("[WIFI] Dimatikan");
+  delay(500);
 }
 
 void setupTimeIfNeeded()
@@ -124,6 +114,7 @@ void setupTimeIfNeeded()
   int retry = 0;
 
   Serial.print("[TIME] Sinkronisasi waktu");
+
   while (!getLocalTime(&timeinfo) && retry < 20)
   {
     delay(500);
@@ -132,8 +123,10 @@ void setupTimeIfNeeded()
   }
 
   Serial.println();
+
   timeReady = getLocalTime(&timeinfo);
-  Serial.println(timeReady ? "[TIME] Waktu berhasil sinkron" : "[TIME] Gagal sinkron waktu");
+
+  Serial.println(timeReady ? "[TIME] OK" : "[TIME] Gagal");
 }
 
 bool getDateTimeString(char *out, size_t outSize, unsigned long &epochMs)
@@ -171,6 +164,7 @@ String getStringField(String json, String fieldName)
 
   if (firstQuote < 0 || secondQuote < 0)
     return "";
+
   return json.substring(firstQuote + 1, secondQuote);
 }
 
@@ -198,13 +192,13 @@ bool bacaActiveSessionFirestore()
 
     if (!https.begin(client, url))
     {
-      Serial.println("[FIRESTORE] begin gagal");
       https.end();
       delay(1000);
       continue;
     }
 
     int httpCode = https.GET();
+
     Serial.print("[FIRESTORE] GET code: ");
     Serial.println(httpCode);
 
@@ -216,19 +210,13 @@ bool bacaActiveSessionFirestore()
       activePatientId = getStringField(response, "patientId");
       activePatientName = getStringField(response, "patientName");
       activeNurseName = getStringField(response, "nurseName");
-      activeMode = getStringField(response, "mode");
 
-      if (activeMode.length() == 0)
-        activeMode = "single";
-
-      Serial.print("Patient ID     : ");
+      Serial.print("Patient ID   : ");
       Serial.println(activePatientId);
-      Serial.print("Patient Name   : ");
+      Serial.print("Patient Name : ");
       Serial.println(activePatientName);
-      Serial.print("Nurse Name     : ");
+      Serial.print("Nurse Name   : ");
       Serial.println(activeNurseName);
-      Serial.print("Mode Firestore : ");
-      Serial.println(activeMode);
 
       return activePatientId.length() > 0;
     }
@@ -239,7 +227,6 @@ bool bacaActiveSessionFirestore()
     }
 
     https.end();
-    Serial.println("[FIRESTORE] GET gagal, retry...");
     delay(1500);
   }
 
@@ -270,6 +257,7 @@ bool parseHexRecord(const char *str, uint8_t *out, int &count)
 
     while (*str == ' ')
       str++;
+
     if (count >= 32)
       break;
   }
@@ -299,12 +287,8 @@ bool httpPost(String url, String payload)
     HTTPClient https;
     https.setTimeout(20000);
 
-    Serial.print("[HTTP POST] attempt ");
-    Serial.println(attempt);
-
     if (!https.begin(client, url))
     {
-      Serial.println("[HTTP POST] begin gagal");
       https.end();
       delay(1000);
       continue;
@@ -313,13 +297,13 @@ bool httpPost(String url, String payload)
     https.addHeader("Content-Type", "application/json");
 
     int httpCode = https.POST(payload);
+
     Serial.print("[HTTP POST] code: ");
     Serial.println(httpCode);
 
     if (httpCode > 0)
     {
-      String response = https.getString();
-      Serial.println(response);
+      Serial.println(https.getString());
     }
 
     https.end();
@@ -329,7 +313,6 @@ bool httpPost(String url, String payload)
       return true;
     }
 
-    Serial.println("[HTTP POST] gagal, retry...");
     delay(1500);
   }
 
@@ -353,12 +336,8 @@ bool httpPatch(String url, String payload)
     HTTPClient https;
     https.setTimeout(20000);
 
-    Serial.print("[HTTP PATCH] attempt ");
-    Serial.println(attempt);
-
     if (!https.begin(client, url))
     {
-      Serial.println("[HTTP PATCH] begin gagal");
       https.end();
       delay(1000);
       continue;
@@ -367,13 +346,13 @@ bool httpPatch(String url, String payload)
     https.addHeader("Content-Type", "application/json");
 
     int httpCode = https.PATCH(payload);
+
     Serial.print("[HTTP PATCH] code: ");
     Serial.println(httpCode);
 
     if (httpCode > 0)
     {
-      String response = https.getString();
-      Serial.println(response);
+      Serial.println(https.getString());
     }
 
     https.end();
@@ -383,14 +362,13 @@ bool httpPatch(String url, String payload)
       return true;
     }
 
-    Serial.println("[HTTP PATCH] gagal, retry...");
     delay(1500);
   }
 
   return false;
 }
 
-bool kirimSingleFirestore(int sbp, int dbp, int bpm)
+bool kirimSingleFirestore(int sbp, int dbp, int bpm, bool keepWifiOn = false)
 {
   connectWiFiIfNeeded();
   if (!wifiConnected)
@@ -410,48 +388,25 @@ bool kirimSingleFirestore(int sbp, int dbp, int bpm)
 
   float mapValue = hitungMAP(sbp, dbp);
 
-  Serial.println();
-  Serial.println("================================");
-  Serial.println("HASIL SINGLE");
-  Serial.println("================================");
-  Serial.print("Patient ID    : ");
-  Serial.println(activePatientId);
-  Serial.print("Patient Name  : ");
-  Serial.println(activePatientName);
-  Serial.print("Nurse Name    : ");
-  Serial.println(activeNurseName);
-  Serial.print("Waktu         : ");
-  Serial.println(datetimeStr);
-  Serial.print("Tekanan Darah : ");
-  Serial.print(sbp);
-  Serial.print("/");
-  Serial.println(dbp);
-  Serial.print("Heart Rate    : ");
-  Serial.print(bpm);
-  Serial.println(" bpm");
-  Serial.print("MAP           : ");
-  Serial.println(mapValue, 1);
-  Serial.println("================================");
-
-  String measurementPayload = "{";
-  measurementPayload += "\"fields\":{";
-  measurementPayload += "\"mode\":{\"stringValue\":\"single\"},";
-  measurementPayload += "\"patientId\":{\"stringValue\":\"" + activePatientId + "\"},";
-  measurementPayload += "\"patientName\":{\"stringValue\":\"" + activePatientName + "\"},";
-  measurementPayload += "\"nurseName\":{\"stringValue\":\"" + activeNurseName + "\"},";
-  measurementPayload += "\"sbp\":{\"integerValue\":\"" + String(sbp) + "\"},";
-  measurementPayload += "\"dbp\":{\"integerValue\":\"" + String(dbp) + "\"},";
-  measurementPayload += "\"bpm\":{\"integerValue\":\"" + String(bpm) + "\"},";
-  measurementPayload += "\"map\":{\"doubleValue\":" + String(mapValue, 1) + "},";
-  measurementPayload += "\"timestamp_ms\":{\"integerValue\":\"" + String(epochMs) + "\"},";
-  measurementPayload += "\"datetime\":{\"stringValue\":\"" + String(datetimeStr) + "\"}";
-  measurementPayload += "}}";
+  String payload = "{";
+  payload += "\"fields\":{";
+  payload += "\"mode\":{\"stringValue\":\"single\"},";
+  payload += "\"patientId\":{\"stringValue\":\"" + activePatientId + "\"},";
+  payload += "\"patientName\":{\"stringValue\":\"" + activePatientName + "\"},";
+  payload += "\"nurseName\":{\"stringValue\":\"" + activeNurseName + "\"},";
+  payload += "\"sbp\":{\"integerValue\":\"" + String(sbp) + "\"},";
+  payload += "\"dbp\":{\"integerValue\":\"" + String(dbp) + "\"},";
+  payload += "\"bpm\":{\"integerValue\":\"" + String(bpm) + "\"},";
+  payload += "\"map\":{\"doubleValue\":" + String(mapValue, 1) + "},";
+  payload += "\"timestamp_ms\":{\"integerValue\":\"" + String(epochMs) + "\"},";
+  payload += "\"datetime\":{\"stringValue\":\"" + String(datetimeStr) + "\"}";
+  payload += "}}";
 
   String measurementUrl = firestoreBaseUrl() +
                           "/patients/" + activePatientId +
                           "/measurements";
 
-  bool okMeasurement = httpPost(measurementUrl, measurementPayload);
+  bool okMeasurement = httpPost(measurementUrl, payload);
 
   String latestPayload = "{";
   latestPayload += "\"fields\":{";
@@ -476,11 +431,17 @@ bool kirimSingleFirestore(int sbp, int dbp, int bpm)
 
   bool okLatest = httpPatch(latestUrl, latestPayload);
 
-  disconnectWiFi();
-  return okMeasurement && okLatest;
+  bool success = okMeasurement && okLatest;
+
+  if (!keepWifiOn)
+  {
+    disconnectWiFi();
+  }
+
+  return success;
 }
 
-bool kirimROTFirestore(int rot)
+bool kirimROTFirestore(int rot, bool keepWifiOn = false)
 {
   connectWiFiIfNeeded();
   if (!wifiConnected)
@@ -498,88 +459,64 @@ bool kirimROTFirestore(int rot)
   unsigned long epochMs = 0;
   getDateTimeString(datetimeStr, sizeof(datetimeStr), epochMs);
 
-  Serial.println();
-  Serial.println("================================");
-  Serial.println("HASIL ROT");
-  Serial.println("================================");
-  Serial.print("Patient ID    : ");
-  Serial.println(activePatientId);
-  Serial.print("Patient Name  : ");
-  Serial.println(activePatientName);
-  Serial.print("Nurse Name    : ");
-  Serial.println(activeNurseName);
-  Serial.print("Miring kiri   : ");
-  Serial.print(miringSbp);
-  Serial.print("/");
-  Serial.print(miringDbp);
-  Serial.print(" | BPM ");
-  Serial.println(miringBpm);
-  Serial.print("Terlentang    : ");
-  Serial.print(terlentangSbp);
-  Serial.print("/");
-  Serial.print(terlentangDbp);
-  Serial.print(" | BPM ");
-  Serial.println(terlentangBpm);
-  Serial.print("ROT           : ");
-  Serial.print(terlentangDbp);
-  Serial.print(" - ");
-  Serial.print(miringDbp);
-  Serial.print(" = ");
-  Serial.println(rot);
-  Serial.println("================================");
-
-  String rotPayload = "{";
-  rotPayload += "\"fields\":{";
-  rotPayload += "\"mode\":{\"stringValue\":\"rot\"},";
-  rotPayload += "\"patientId\":{\"stringValue\":\"" + activePatientId + "\"},";
-  rotPayload += "\"patientName\":{\"stringValue\":\"" + activePatientName + "\"},";
-  rotPayload += "\"nurseName\":{\"stringValue\":\"" + activeNurseName + "\"},";
-  rotPayload += "\"rot\":{\"integerValue\":\"" + String(rot) + "\"},";
-  rotPayload += "\"miring_dbp\":{\"integerValue\":\"" + String(miringDbp) + "\"},";
-  rotPayload += "\"terlentang_dbp\":{\"integerValue\":\"" + String(terlentangDbp) + "\"},";
-  rotPayload += "\"timestamp_ms\":{\"integerValue\":\"" + String(epochMs) + "\"},";
-  rotPayload += "\"datetime\":{\"stringValue\":\"" + String(datetimeStr) + "\"},";
-  rotPayload += "\"miring_kiri\":{\"mapValue\":{\"fields\":{";
-  rotPayload += "\"sbp\":{\"integerValue\":\"" + String(miringSbp) + "\"},";
-  rotPayload += "\"dbp\":{\"integerValue\":\"" + String(miringDbp) + "\"},";
-  rotPayload += "\"bpm\":{\"integerValue\":\"" + String(miringBpm) + "\"}";
-  rotPayload += "}}},";
-  rotPayload += "\"terlentang\":{\"mapValue\":{\"fields\":{";
-  rotPayload += "\"sbp\":{\"integerValue\":\"" + String(terlentangSbp) + "\"},";
-  rotPayload += "\"dbp\":{\"integerValue\":\"" + String(terlentangDbp) + "\"},";
-  rotPayload += "\"bpm\":{\"integerValue\":\"" + String(terlentangBpm) + "\"}";
-  rotPayload += "}}}";
-  rotPayload += "}}";
+  String payload = "{";
+  payload += "\"fields\":{";
+  payload += "\"mode\":{\"stringValue\":\"rot\"},";
+  payload += "\"patientId\":{\"stringValue\":\"" + activePatientId + "\"},";
+  payload += "\"patientName\":{\"stringValue\":\"" + activePatientName + "\"},";
+  payload += "\"nurseName\":{\"stringValue\":\"" + activeNurseName + "\"},";
+  payload += "\"rot\":{\"integerValue\":\"" + String(rot) + "\"},";
+  payload += "\"miring_dbp\":{\"integerValue\":\"" + String(miringDbp) + "\"},";
+  payload += "\"terlentang_dbp\":{\"integerValue\":\"" + String(terlentangDbp) + "\"},";
+  payload += "\"timestamp_ms\":{\"integerValue\":\"" + String(epochMs) + "\"},";
+  payload += "\"datetime\":{\"stringValue\":\"" + String(datetimeStr) + "\"},";
+  payload += "\"miring_kiri\":{\"mapValue\":{\"fields\":{";
+  payload += "\"sbp\":{\"integerValue\":\"" + String(miringSbp) + "\"},";
+  payload += "\"dbp\":{\"integerValue\":\"" + String(miringDbp) + "\"},";
+  payload += "\"bpm\":{\"integerValue\":\"" + String(miringBpm) + "\"}";
+  payload += "}}},";
+  payload += "\"terlentang\":{\"mapValue\":{\"fields\":{";
+  payload += "\"sbp\":{\"integerValue\":\"" + String(terlentangSbp) + "\"},";
+  payload += "\"dbp\":{\"integerValue\":\"" + String(terlentangDbp) + "\"},";
+  payload += "\"bpm\":{\"integerValue\":\"" + String(terlentangBpm) + "\"}";
+  payload += "}}}";
+  payload += "}}";
 
   String rotUrl = firestoreBaseUrl() +
                   "/patients/" + activePatientId +
                   "/rotLogs";
 
-  bool okRotLog = httpPost(rotUrl, rotPayload);
+  bool okRotLog = httpPost(rotUrl, payload);
 
-  String latestRotPayload = "{";
-  latestRotPayload += "\"fields\":{";
-  latestRotPayload += "\"latestROT\":{";
-  latestRotPayload += "\"mapValue\":{";
-  latestRotPayload += "\"fields\":{";
-  latestRotPayload += "\"rot\":{\"integerValue\":\"" + String(rot) + "\"},";
-  latestRotPayload += "\"miring_dbp\":{\"integerValue\":\"" + String(miringDbp) + "\"},";
-  latestRotPayload += "\"terlentang_dbp\":{\"integerValue\":\"" + String(terlentangDbp) + "\"},";
-  latestRotPayload += "\"datetime\":{\"stringValue\":\"" + String(datetimeStr) + "\"},";
-  latestRotPayload += "\"timestamp_ms\":{\"integerValue\":\"" + String(epochMs) + "\"}";
-  latestRotPayload += "}}}}}";
+  String latestPayload = "{";
+  latestPayload += "\"fields\":{";
+  latestPayload += "\"latestROT\":{";
+  latestPayload += "\"mapValue\":{";
+  latestPayload += "\"fields\":{";
+  latestPayload += "\"rot\":{\"integerValue\":\"" + String(rot) + "\"},";
+  latestPayload += "\"miring_dbp\":{\"integerValue\":\"" + String(miringDbp) + "\"},";
+  latestPayload += "\"terlentang_dbp\":{\"integerValue\":\"" + String(terlentangDbp) + "\"},";
+  latestPayload += "\"datetime\":{\"stringValue\":\"" + String(datetimeStr) + "\"},";
+  latestPayload += "\"timestamp_ms\":{\"integerValue\":\"" + String(epochMs) + "\"}";
+  latestPayload += "}}}}}";
 
-  String latestRotUrl = firestoreBaseUrl() +
-                        "/patients/" + activePatientId +
-                        "?updateMask.fieldPaths=latestROT";
+  String latestUrl = firestoreBaseUrl() +
+                     "/patients/" + activePatientId +
+                     "?updateMask.fieldPaths=latestROT";
 
-  bool okLatestRot = httpPatch(latestRotUrl, latestRotPayload);
+  bool okLatest = httpPatch(latestUrl, latestPayload);
 
-  disconnectWiFi();
-  return okRotLog && okLatestRot;
+  bool success = okRotLog && okLatest;
+
+  if (!keepWifiOn)
+  {
+    disconnectWiFi();
+  }
+
+  return success;
 }
 
-void prosesModeROT(int sbp, int dbp, int bpm)
+void prosesROT(int sbp, int dbp, int bpm)
 {
   if (rotStep == 0)
   {
@@ -587,21 +524,23 @@ void prosesModeROT(int sbp, int dbp, int bpm)
     miringDbp = dbp;
     miringBpm = bpm;
 
-    rotStep = 1;
+    bool ok = kirimSingleFirestore(sbp, dbp, bpm, false);
 
     Serial.println();
     Serial.println("================================");
-    Serial.println("[ROT] Sampel 1/2 diambil");
+    Serial.println("[ROT] Sampel 1/2");
     Serial.println("Posisi: MIRING KIRI");
-    Serial.print("Tekanan Darah : ");
+    Serial.print("TD: ");
     Serial.print(sbp);
     Serial.print("/");
     Serial.println(dbp);
-    Serial.print("Heart Rate    : ");
-    Serial.print(bpm);
-    Serial.println(" bpm");
-    Serial.println("Lanjutkan pengukuran posisi TERLENTANG");
+    Serial.print("BPM: ");
+    Serial.println(bpm);
+    Serial.println(ok ? "[FIRESTORE] Sampel 1 terkirim" : "[FIRESTORE] Sampel 1 gagal");
+    Serial.println("Lanjut ukur posisi TERLENTANG");
     Serial.println("================================");
+
+    rotStep = 1;
     return;
   }
 
@@ -613,8 +552,33 @@ void prosesModeROT(int sbp, int dbp, int bpm)
 
     int rot = terlentangDbp - miringDbp;
 
-    bool success = kirimROTFirestore(rot);
-    Serial.println(success ? "[FIRESTORE] ROT berhasil dikirim" : "[FIRESTORE] ROT gagal dikirim");
+    connectWiFiIfNeeded();
+    setupTimeIfNeeded();
+
+    bool okSingle = kirimSingleFirestore(terlentangSbp, terlentangDbp, terlentangBpm, true);
+    bool okRot = kirimROTFirestore(rot, true);
+
+    disconnectWiFi();
+
+    Serial.println();
+    Serial.println("================================");
+    Serial.println("[ROT] Sampel 2/2");
+    Serial.println("Posisi: TERLENTANG");
+    Serial.print("TD: ");
+    Serial.print(terlentangSbp);
+    Serial.print("/");
+    Serial.println(terlentangDbp);
+    Serial.print("BPM: ");
+    Serial.println(terlentangBpm);
+    Serial.print("ROT = ");
+    Serial.print(terlentangDbp);
+    Serial.print(" - ");
+    Serial.print(miringDbp);
+    Serial.print(" = ");
+    Serial.println(rot);
+    Serial.println(okSingle ? "[FIRESTORE] Sampel 2 terkirim" : "[FIRESTORE] Sampel 2 gagal");
+    Serial.println(okRot ? "[FIRESTORE] ROT terkirim" : "[FIRESTORE] ROT gagal");
+    Serial.println("================================");
 
     rotStep = 0;
   }
@@ -651,41 +615,16 @@ void prosesLine(char *s)
 
       expectResult = false;
 
-      if (sbp == lastSbp && dbp == lastDbp && bpm == lastBpm &&
+      if (sbp == lastSbp &&
+          dbp == lastDbp &&
+          bpm == lastBpm &&
           millis() - lastSendMs < 10000)
       {
         Serial.println("[INFO] Data duplikat diabaikan");
         return;
       }
 
-      connectWiFiIfNeeded();
-      if (!wifiConnected)
-      {
-        Serial.println("[WIFI] Gagal konek");
-        return;
-      }
-
-      bool sessionOk = bacaActiveSessionFirestore();
-      disconnectWiFi();
-
-      if (!sessionOk)
-      {
-        Serial.println("[FIRESTORE] Active session tidak ditemukan");
-        return;
-      }
-
-      Serial.print("[MODE FIRESTORE] ");
-      Serial.println(activeMode);
-
-      if (activeMode == "rot")
-      {
-        prosesModeROT(sbp, dbp, bpm);
-      }
-      else
-      {
-        bool success = kirimSingleFirestore(sbp, dbp, bpm);
-        Serial.println(success ? "[FIRESTORE] Data berhasil dikirim" : "[FIRESTORE] Data gagal dikirim");
-      }
+      prosesROT(sbp, dbp, bpm);
 
       lastSbp = sbp;
       lastDbp = dbp;
@@ -703,9 +642,10 @@ void setup()
 
   WiFi.mode(WIFI_OFF);
 
-  Serial.println("=== BP Reader + Firestore + ROT ===");
-  Serial.println("Mode selalu ikut Firestore:");
-  Serial.println("settings/activeSession/mode = single atau rot");
+  Serial.println("=== BP Reader + Firestore + Auto ROT ===");
+  Serial.println("WiFi OFF saat pengukuran.");
+  Serial.println("Pengukuran 1 = kirim measurement + simpan miring.");
+  Serial.println("Pengukuran 2 = kirim measurement + hitung/kirim ROT.");
 }
 
 void loop()
