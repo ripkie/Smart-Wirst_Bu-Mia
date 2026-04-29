@@ -2,6 +2,8 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <WebServer.h>
+#include <WiFiManager.h>
 #include <time.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -9,8 +11,6 @@
 #define RXD2 16
 #define TXD2 17
 
-const char *WIFI_SSID = "ripki";
-const char *WIFI_PASSWORD = "12341234";
 const char *FIRESTORE_PROJECT_ID = "smart-wirst";
 
 const char *NTP_SERVER = "pool.ntp.org";
@@ -43,6 +43,83 @@ int terlentangSbp = 0;
 int terlentangDbp = 0;
 int terlentangBpm = 0;
 
+void tampilkanHalamanWiFiBerhasil(unsigned long durasiMs = 10000)
+{
+  WebServer server(80);
+
+  server.on("/", [&server]()
+            {
+    String html = "";
+    html += "<!DOCTYPE html><html><head>";
+    html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+    html += "<title>WiFi Tersambung</title>";
+    html += "<style>";
+    html += "body{font-family:Arial;text-align:center;padding:30px;background:#f4f7fb;}";
+    html += ".card{background:white;border-radius:16px;padding:25px;max-width:420px;margin:auto;box-shadow:0 4px 20px rgba(0,0,0,.12);}";
+    html += "h1{color:#188038;}p{font-size:18px;color:#333;}";
+    html += ".ip{font-weight:bold;color:#1a73e8;}";
+    html += "</style></head><body>";
+    html += "<div class='card'>";
+    html += "<h1>WiFi tersambung</h1>";
+    html += "<p>Silahkan lakukan pengukuran tekanan darah.</p>";
+    html += "<p>IP ESP32: <span class='ip'>" + WiFi.localIP().toString() + "</span></p>";
+    html += "</div></body></html>";
+
+    server.send(200, "text/html", html); });
+
+  server.begin();
+
+  Serial.println("[WIFI] Halaman sukses aktif sementara.");
+  Serial.print("[WIFI] Buka browser: http://");
+  Serial.println(WiFi.localIP());
+
+  unsigned long startMs = millis();
+  while (millis() - startMs < durasiMs)
+  {
+    server.handleClient();
+    delay(10);
+  }
+
+  server.stop();
+  Serial.println("[WIFI] Halaman sukses ditutup.");
+}
+
+void initWiFiConfig()
+{
+  WiFi.mode(WIFI_STA);
+
+  WiFiManager wm;
+  wm.setConnectTimeout(10);
+  wm.setConfigPortalTimeout(180);
+
+  Serial.println("[WIFI] Init WiFi config...");
+  Serial.println("[WIFI] Jika belum tersimpan, connect HP ke hotspot: ESP32-BP-Setup");
+
+  bool connected = wm.autoConnect("mamacare - wifi setup");
+
+  if (connected)
+  {
+    wifiConnected = true;
+
+    Serial.println("[WIFI] WiFi tersambung, silahkan lakukan pengukuran.");
+    Serial.print("[WIFI] IP: ");
+    Serial.println(WiFi.localIP());
+
+    tampilkanHalamanWiFiBerhasil(10000);
+  }
+  else
+  {
+    Serial.println("[WIFI] Gagal connect / config timeout");
+  }
+
+  WiFi.disconnect(false);
+  WiFi.mode(WIFI_OFF);
+  wifiConnected = false;
+  timeReady = false;
+
+  Serial.println("[WIFI] Dimatikan setelah init");
+}
+
 String firestoreBaseUrl()
 {
   return String("https://firestore.googleapis.com/v1/projects/") +
@@ -60,29 +137,26 @@ void connectWiFiIfNeeded()
 
   WiFi.mode(WIFI_STA);
 
-  while (WiFi.status() != WL_CONNECTED)
+  WiFiManager wm;
+
+  // Coba connect ke WiFi tersimpan maksimal 10 detik.
+  // Kalau gagal, ESP32 akan membuka hotspot konfigurasi.
+  wm.setConnectTimeout(10);
+
+  // Portal konfigurasi akan mati otomatis jika tidak ada input selama 180 detik.
+  // Setelah itu fungsi return false dan pengiriman data dibatalkan.
+  wm.setConfigPortalTimeout(180);
+
+  Serial.println("[WIFI] Coba connect WiFi tersimpan...");
+  Serial.println("[WIFI] Jika gagal, connect HP ke hotspot: ESP32-BP-Setup");
+
+  bool connected = wm.autoConnect("Mamacare - Wifi Setup");
+
+  if (!connected)
   {
-    Serial.println("[WIFI] Menghubungkan WiFi...");
-    WiFi.disconnect(true);
-    delay(500);
-
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-    int retry = 0;
-    while (WiFi.status() != WL_CONNECTED && retry < 40)
-    {
-      delay(500);
-      Serial.print(".");
-      retry++;
-    }
-
-    Serial.println();
-
-    if (WiFi.status() != WL_CONNECTED)
-    {
-      Serial.println("[WIFI] Belum konek, coba ulang...");
-      delay(2000);
-    }
+    Serial.println("[WIFI] Gagal connect / config timeout");
+    wifiConnected = false;
+    return;
   }
 
   wifiConnected = true;
@@ -95,7 +169,9 @@ void connectWiFiIfNeeded()
 
 void disconnectWiFi()
 {
-  WiFi.disconnect(true, true);
+  // Jangan pakai WiFi.disconnect(true, true), karena itu menghapus WiFi tersimpan.
+  // Dengan ini, WiFiManager tetap bisa auto-connect ke WiFi terakhir.
+  WiFi.disconnect();
   WiFi.mode(WIFI_OFF);
   wifiConnected = false;
   timeReady = false;
@@ -640,7 +716,7 @@ void setup()
   Serial2.begin(115200, SERIAL_8N1, RXD2, TXD2);
   delay(1000);
 
-  WiFi.mode(WIFI_OFF);
+  initWiFiConfig();
 
   Serial.println("=== BP Reader + Firestore + Auto ROT ===");
   Serial.println("WiFi OFF saat pengukuran.");
